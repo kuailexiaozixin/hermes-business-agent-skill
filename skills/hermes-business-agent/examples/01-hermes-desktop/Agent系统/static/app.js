@@ -182,7 +182,13 @@ function bindEvents() {
     }
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
   });
-ta.addEventListener("input", () => { updateCmdPop(); updateContextIndicator(); });
+// 输入防抖：原实现每敲一个字符都同步发 /api/context/status 请求，输入/粘贴明显卡顿。
+let _ctxDebounce = null;
+function scheduleContextIndicator() {
+  clearTimeout(_ctxDebounce);
+  _ctxDebounce = setTimeout(updateContextIndicator, 400);
+}
+ta.addEventListener("input", () => { updateCmdPop(); scheduleContextIndicator(); });
 ta.addEventListener("paste", async (e) => {
   const items = e.clipboardData.items;
   let hasImage = false;

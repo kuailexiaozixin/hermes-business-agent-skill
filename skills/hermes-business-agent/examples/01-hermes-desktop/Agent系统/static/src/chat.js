@@ -1149,7 +1149,10 @@ async function sendMessage() {
   } finally {
     State.replace_index = null;
     State.activeStreams.delete(myConvId);
-    if (State.conv_id === myConvId) {
+    // 修复按钮卡「停止」：新会话首轮 myConvId=""，done 事件已把 State.conv_id 更新为新值，
+    // 旧判断 State.conv_id === myConvId 永不成立 → setStreaming(false) 被跳过，按钮残留「停止」。
+    // 改为：本轮流已结束且无其他活跃流时无条件复位发送按钮。
+    if (!myConvId || State.conv_id === myConvId || State.activeStreams.size === 0) {
       setStreaming(false);
     }
     await loadConversations(State.conv_id || undefined);
@@ -1683,7 +1686,7 @@ async function loadToolbarSelects() {
         const parent = useGroup ? el("optgroup", { label: v }) : msel;
         for (const m of groups[v]) {
           const opt = el("option", { value: m.id });
-          opt.textContent = (m.model || m.id) + (m.has_key ? "" : " ⚠无密钥");
+          opt.textContent = (m.model || m.id) + (m.has_key ? "" : " ⚠无密钥") + (m.id === active ? "（当前）" : "");
           opt.title = [m.vendor, m.base_url].filter(Boolean).join(" · ") || (m.model || m.id);
           if (m.id === active) opt.selected = true;
           parent.appendChild(opt);

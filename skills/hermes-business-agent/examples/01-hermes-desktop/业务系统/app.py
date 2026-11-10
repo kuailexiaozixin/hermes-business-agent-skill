@@ -1,53 +1,12 @@
-"""业务系统 app.py — 纯业务，不依赖 Agent 系统
+"""业务系统根级独立入口（三系统架构门禁 biz_independent_entry 识别）。
 
-三系统架构下，业务系统职责（高内聚低耦合）：
-- **纯业务逻辑与界面**：build_app() 自建 FastHTML app，只处理业务，不含 Agent。
-- **可挂载能力**：mount_rd_routes(app, rt) 把业务路由挂到「任意 app」——
-  独立模式挂到自建 app，融合模式由连接系统把它挂到 Agent 底座 app 上。
-- **业务快照**：get_business_snapshot() 向 Agent 对话提供业务数据快照（供注入上下文）。
+统一从 rdapp.app 暴露 FastHTML 应用 app 与路由对象 rt，作为业务系统的根级入口。
+业务系统保持纯净：本文件不 import 任何 Agent 模块，可独立运行（脱离 Agent/连接系统）：
 
-🔒 铁律：业务系统**绝不 import 任何 Agent 系统模块**
-（server / routes / agent_runtime / tools / hermes_config / app_tools …）。
-依赖方向：业务系统 → 连接系统 → Agent系统。装配全部由连接系统承担。
+    python biz_main.py                 # 桌面窗口 / headless 见 biz_main.py
+    RD_NO_GUI=1 python 业务系统/app.py  # 经本入口启动
+
+与融合模式（连接系统/main.py）并存：融合模式由 bridge.fuse_business_into_agent 装配，
+此处提供业务独立入口。
 """
-from fasthtml.common import *
-
-
-def build_app():
-    """构建纯业务 FastHTML app（独立模式 / 业务独立 EXE 用）。"""
-    _a, _rt = fast_app(pico=False, htmx=False, live=False, title="业务系统")
-    return _a, _rt
-
-
-def mount_rd_routes(_a, _rt):
-    """把业务路由挂载到指定 app/rt（融合模式由连接系统传入 Agent 底座 app/rt）。"""
-    @_rt("/dashboard")
-    def dashboard():
-        return Title("业务仪表盘"), H1("业务系统"), P("纯业务页面，不含 Agent 逻辑。")
-
-    @_rt("/biz-list")
-    def biz_list():
-        return H2("业务数据列表"), Ul([Li(f"业务条目 {i}") for i in range(3)])
-
-    # …… 其余业务路由（费用 / 项目 / 报表等）……
-
-    # 静态资源（如需）：_a.mount 或 fasthtml 静态配置
-
-
-def get_business_snapshot() -> str:
-    """生成业务数据快照（融合模式下由连接系统注入 Agent 对话上下文）。"""
-    return (
-        "## 业务数据快照\n"
-        "- 业务条目数：3\n"
-        "- 示例业务指标：……"
-    )
-
-
-# 独立运行（biz_main / 独立 EXE）时自建纯业务 app；融合模式由连接系统 bridge 装配。
-app, rt = build_app()
-mount_rd_routes(app, rt)
-
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8810)
+from rdapp.app import app, rt  # noqa: F401

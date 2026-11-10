@@ -87,6 +87,28 @@ def _get_js_errors():
 # ── 触发路由子模块注册（app 创建后导入；路由定义在 routes/ 包）─────────────
 import routes  # noqa: E402
 
+# ── P1：首轮 Agent 预热（后台线程预构造默认模型实例，首轮对话直接命中缓存）──
+# 仅当已配置有效 api_key 才预热；无 key / 构造失败均静默跳过（best-effort，
+# 不阻塞服务启动，不产生日志噪音）。
+def _start_agent_warmup() -> None:
+    import threading
+
+    def _warmup() -> None:
+        try:
+            import hermes_config as _hc
+            cfg = _hc.get_active_model_cfg()
+            if not cfg or not cfg.get("api_key"):
+                return  # 未配置有效 Key → 不预热
+            from agent_runtime._cache import prewarm_agent
+            prewarm_agent(cfg)
+        except Exception as _e:  # noqa: BLE001
+            print(f"[warmup] skip: {type(_e).__name__}: {_e}", file=sys.stderr)
+
+    threading.Thread(target=_warmup, daemon=True, name="agent-warmup").start()
+
+
+_start_agent_warmup()
+
 # ── 热重载（开发调试用：前端代码修改后自动刷新页面）────────────────────
 _HR_STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 _HR_SNAPSHOT: dict[str, float] = {}

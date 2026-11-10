@@ -13,6 +13,9 @@ import * as Panels from "./panels.js";
 import * as Channels from "./channels.js";
 
 // ------------------------------------------------------------------ 主区视图切换
+// 已渲染视图缓存：模块视图首次进入才全量渲染，之后仅显隐，避免每次切换都清空重建 + 重复请求导致卡顿。
+// 各面板内部的「刷新」按钮仍直接调用 render*View，不受缓存影响。
+const _renderedViews = new Set();
 function showView(name) {
   State.currentView = name;
   document.querySelectorAll("#sideNav .nav").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
@@ -30,7 +33,10 @@ function showView(name) {
   if (!isChat) {
     const v = $("#view-" + name);
     if (v) v.classList.remove("hidden");
-    renderCurrentView();
+    if (!_renderedViews.has(name)) {
+      _renderedViews.add(name);
+      renderCurrentView();
+    }
   }
 }
 

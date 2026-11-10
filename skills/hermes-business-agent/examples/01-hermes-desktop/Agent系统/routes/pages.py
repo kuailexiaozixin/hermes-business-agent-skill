@@ -1,4 +1,4 @@
-from fasthtml.common import Body, Button, Div, Form, Head, Html, Input, Label, Link, Meta, Option, Script, Select, Span, Title
+from fasthtml.common import A, Body, Button, Div, Form, Head, Html, Input, Label, Link, Meta, Option, Script, Select, Span, Title
 
 from server import app, APP_TITLE
 @app.get("/")
@@ -16,6 +16,14 @@ def index():
             Div(cls="sidebar", id="sidebar")(
                 Div(cls="side-head")(
                     Div(cls="brand")(Span(cls="dot"), "Hermes Desktop"),
+                    A(
+                        Span("🏢", cls="biz-entry-icon"),
+                        Div(
+                            Span("研发费用管理系统", cls="biz-entry-title"),
+                            Span("进入业务系统 →", cls="biz-entry-sub"),
+                        ),
+                        href="/dashboard", cls="biz-entry", title="一键进入研发费用管理系统",
+                    ),
                     Button("＋ 新对话", cls="btn primary block", id="btnNew"),
                     Form(
                         Input(id="convSearch", cls="search-box", placeholder="搜索会话 / #标签",
