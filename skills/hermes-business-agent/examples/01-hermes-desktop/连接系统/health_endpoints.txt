@@ -1,0 +1,11 @@
+# 关键业务健康端点（冒烟测试须全部 200，防 HTTP 正常但后台崩溃的假绿）
+# 本项目为 Hermes 进程内 Library 模式（from run_agent import AIAgent），无独立 gateway 子进程，
+# 8642/health 永不响应，不得用作冒烟端点。PORT 为主应用实际监听端口（默认 find_free_port(5001,6000)，
+# 冒烟时用 PORT 环境变量固定，如 PORT=5599）。
+#
+# 实测有效端点（2026-08-17 冒烟核验）：
+http://127.0.0.1:PORT/healthz                 # 健康检查（200）
+http://127.0.0.1:PORT/dashboard               # 业务首页（200）
+http://127.0.0.1:PORT/worktime                # 业务列表页（200）
+http://127.0.0.1:PORT/api/chat                # Agent 对话路由（POST text=xxx，200；真实 LLM 需 API Key）
+# 注：旧版 /api/hub/native-plugins 端点已随底座版本升级移除（404），不再用作健康端点。

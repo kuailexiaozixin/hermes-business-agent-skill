@@ -340,7 +340,14 @@
         if (!d.ok) { status.textContent = "加载失败：" + (d.error || "未知错误"); return; }
         var items = d.items || [];
         state.hasMore = (items.length > 0) && ((state.page * state.pageSize) < (d.total || 0));
-        if (reset && !items.length) { status.textContent = "没有找到匹配的技能。"; grid.innerHTML = ""; return; }
+        if (reset && !items.length) {
+          var srcErrs = d.source_errors || [];
+          status.textContent = srcErrs.length
+            ? srcErrs.join("；")
+            : "没有找到匹配的技能。";
+          grid.innerHTML = "";
+          return;
+        }
         grid.insertAdjacentHTML("beforeend", items.map(cardHtml).join(""));
         if (state.hasMore && loadMore) {
           loadMore.innerHTML = '<button class="btn btn-outline ss-loadmore">加载更多…</button>';

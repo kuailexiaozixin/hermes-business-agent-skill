@@ -109,6 +109,22 @@ def _start_agent_warmup() -> None:
 
 _start_agent_warmup()
 
+# ── 技能市场预热（后台线程拉 browse.sh 大目录 + 首页，避免首次打开市场空白）──
+def _start_market_warmup() -> None:
+    import threading
+
+    def _warmup() -> None:
+        try:
+            import unified_skills_client as _u
+            _u.warm_cache()
+        except Exception as _e:  # noqa: BLE001
+            print(f"[market-warmup] skip: {type(_e).__name__}: {_e}", file=sys.stderr)
+
+    threading.Thread(target=_warmup, daemon=True, name="market-warmup").start()
+
+
+_start_market_warmup()
+
 # ── 热重载（开发调试用：前端代码修改后自动刷新页面）────────────────────
 _HR_STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 _HR_SNAPSHOT: dict[str, float] = {}

@@ -40,6 +40,16 @@ _OFFICIAL_TREE_URL = "https://api.github.com/repos/NousResearch/hermes-agent/git
 LOBEHUB_INDEX_URL = "https://chat-agents.lobehub.com/index.json"
 MODELSCOPE_SKILLS_URL = "https://modelscope.cn/api/v1/dolphin/skills"
 
+# 上游 API 的 Cloudflare 防护会把「Mozilla/5.0」这种简写 UA 判成机器人并返回 403
+# （页面是 "Just a moment..." 的 HTML，不是 JSON）。实测带完整浏览器请求头后返回 200。
+_BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+               "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+_BROWSER_HEADERS = {
+    "User-Agent": _BROWSER_UA,
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
 
 # 来源显示名（前端徽标用）
 SOURCE_LABEL = {
@@ -285,6 +295,9 @@ def _search_hermes_sources(q: str, limit: int = 40, timeout: float = 8.0,
     cards: list = []
     q = (q or "").strip()
     srcs = _get_sources()
+    # browse-sh 改由 _browse_sh_page 独立抓取：它的目录大、冷启动常超过本函数
+    # 的整体 timeout，留在这里会既拖慢并发窗口、又拿到被丢弃的空结果。
+    srcs = [s for s in srcs if s.source_id() != "browse-sh"]
     if not srcs:
         return cards
     # 按市场过滤 Hermes 源（source_id → 卡片 source label）
@@ -352,19 +365,94 @@ def _skillsmp_to_card(s: dict) -> dict:
     }
 
 def _skillsmp_page(q: str, page: int = 1, pageSize: int = 24, timeout: float = 8.0):
-    """skillsmp.com server-side paged search. Returns (cards, total)."""
+    """skillsmp.com server-side paged search. Returns (cards, total).
+
+    上游有 Cloudflare：只带 ``User-Agent: Mozilla/5.0`` 会返回 403 的 HTML 挑战页，
+    异常被吞掉后就表现为「市场空白」。实测补完整浏览器请求头 + Referer 后返回
+    200 / 24 条 / total=1200（2026-11-10）。
+    """
     try:
         params = urllib.parse.urlencode({"q": q, "page": max(page, 1), "limit": max(pageSize, 10)})
+        headers = dict(_BROWSER_HEADERS)
+        headers["Referer"] = "https://skillsmp.com/"
         req = urllib.request.Request(
-            "https://skillsmp.com/api/skills?" + params,
-            headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"})
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            "https://skillsmp.com/api/skills?" + params, headers=headers)
+        with urllib.request.urlopen(req, timeout=max(timeout, 12.0)) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except Exception:
         return [], 0
     skills = [s for s in (data.get("skills") or []) if s.get("id")]
     total = (data.get("pagination") or {}).get("total") or len(skills)
     return [_skillsmp_to_card(s) for s in skills], total
+
+
+# ── browse.sh：独立抓取 + 内存缓存，不依赖 Hermes 适配器的 8 秒并发窗口 ──────
+# 目录约 700KB / 479 条，冷启动时直连很慢。Hermes 自带 BrowseShSource 用
+# httpx 直连 + 20s 超时，赶不上统一聚合的整体 timeout，结果会被整批丢弃，
+# 表现为「browse.sh 市场空白」。这里独立抓取、给足超时、只缓存非空结果。
+BROWSE_SH_CATALOG_URL = "https://browse.sh/api/skills"
+_BROWSE_CACHE_KEY = "browse_sh_catalog"
+
+
+def _browse_sh_catalog(timeout: float = 25.0) -> list:
+    """抓取 browse.sh 全量目录并缓存 10 分钟；失败不缓存，下次请求立即重试。"""
+    hit = _cache_get(_BROWSE_CACHE_KEY)
+    if hit is not None:
+        return hit
+    try:
+        req = urllib.request.Request(BROWSE_SH_CATALOG_URL, headers=_BROWSER_HEADERS)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return []
+    skills = [s for s in (data.get("skills") or []) if s.get("slug") and s.get("name")]
+    if not skills:
+        return []
+    _cache_put(_BROWSE_CACHE_KEY, skills)
+    return skills
+
+
+def _browse_sh_to_card(item: dict) -> dict:
+    """browse.sh 目录条目 → 前端卡片（字段与 BrowseShSource 的 SkillMeta 对齐）。"""
+    slug = item.get("slug") or ""
+    desc = item.get("description") or item.get("title") or ""
+    return {
+        "slug": f"browse-sh/{slug}",
+        "name": item.get("name") or "",
+        "description": desc[:1021] + "..." if len(desc) > 1024 else desc,
+        "category": item.get("category") or "",
+        "iconUrl": "",
+        "downloads": item.get("installCount") or 0,
+        "owner": item.get("hostname") or "",
+        "namespace": "browse-sh",
+        "upstream_url": "",  # 安装仍走 Hermes BrowseShSource 的 identifier 解析
+        "homepage": item.get("sourceUrl") or "",
+        "verified": bool(item.get("verified")),
+        "source": "browse-sh",
+        "source_label": SOURCE_LABEL["browse-sh"],
+        "type": "community",
+        "identifier": f"browse-sh/{slug}",
+        "tags": list(item.get("tags") or []),
+        "market": "browse-sh",
+    }
+
+
+def _browse_sh_page(q: str = "", page: int = 1, pageSize: int = 24):
+    """本地过滤 + 切片（browse.sh 无服务端分页）。Returns (cards, total)."""
+    catalog = _browse_sh_catalog()
+    if not catalog:
+        return [], 0
+    needle = (q or "").strip().lower()
+    matched = []
+    for item in catalog:
+        parts = [str(item.get(k) or "") for k in
+                 ("name", "title", "description", "hostname", "category", "task")]
+        parts += [str(t) for t in (item.get("tags") or [])]
+        if not needle or needle in " ".join(parts).lower():
+            matched.append(_browse_sh_to_card(item))
+    start = (max(page, 1) - 1) * max(pageSize, 1)
+    return matched[start:start + max(pageSize, 1)], len(matched)
+
 
 def _parse_frontmatter(text: str) -> dict:
     """Minimal YAML-ish frontmatter parser (name/description/tags)."""
@@ -801,6 +889,13 @@ def search_skills(q: str = "", category: str = "", page: int = 1,
         groups.append((h_cards, h_total))
         grand_total += h_total
 
+    # 2.4) browse.sh（独立抓取 + 内存缓存，本地分页）
+    if sources is None or "browse-sh" in sources:
+        bs_cards, bs_total = _browse_sh_page(q, page, pageSize)
+        if bs_cards:
+            groups.append((bs_cards, bs_total))
+            grand_total += bs_total
+
     # 2.5) skillsmp（服务端分页）
     if sources is None or "skillsmp" in sources:
         mp_cards, mp_total = _skillsmp_page(q, page, pageSize, timeout=hermes_timeout)
@@ -853,6 +948,11 @@ def search_skills(q: str = "", category: str = "", page: int = 1,
     _apply_sort(dedup, sort, q)
 
     total = max(grand_total, 1)
+    # 空搜索（无关键词）却一条都没有，多半是上游超时/被拦，不是「真的没匹配」。
+    # 交给前端显示可操作的提示，避免用户对着空白市场反复刷新。
+    source_errors = [] if dedup or q else [
+        "所选市场暂时没有取到数据，可能是上游不可达或响应超时，请稍后重试",
+    ]
     result = {
         "items": dedup[:pageSize],
         "categories": get_categories(),
@@ -860,9 +960,12 @@ def search_skills(q: str = "", category: str = "", page: int = 1,
         "page": page,
         "pageSize": pageSize,
         "pages": (total + pageSize - 1) // pageSize,
+        "source_errors": source_errors,
         "cached": False,
     }
-    if use_cache:
+    # 空结果不写 10 分钟缓存：一次上游抖动会把市场锁死 10 分钟，
+    # 用户刷新多少次都还是空白。失败时下次请求立即重试。
+    if use_cache and dedup:
         _cache_put(cache_key, result)
     return result
 
@@ -1156,15 +1259,20 @@ def install(identifier: str, upstream_url: str = "", force: bool = False, source
 
 
 def warm_cache() -> None:
-    """后台预热：拉首页 + 分类，使市场打开即秒开（进程内，不落盘）。"""
+    """后台预热：先拉 browse.sh 大目录，再拉首页（内部顺带缓存分类）。
+
+    服务启动时在后台线程调用，避免用户首次打开市场时撞上冷启动超时。
+    """
+    try:
+        _browse_sh_catalog()
+    except Exception:
+        pass
     try:
         search_skills(q="", category="", page=1, pageSize=24, use_cache=True)
     except Exception:
         pass
-    try:
-        get_categories()
-    except Exception:
-        pass
+
+
 def _github_to_raw(upstream_url, source=""):
     """best-effort 把 GitHub 链接解析为 raw SKILL.md 下载地址；解析失败返回 None。"""
     if not upstream_url:
